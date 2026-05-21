@@ -25,3 +25,5 @@ out.json
 
 # Optional: simpan samples lokal untuk debugging (uncomment kalau tidak mau di-commit)
 # samples/
+apikey.txt
+.api_key.txt

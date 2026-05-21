@@ -115,6 +115,8 @@ const search = await fetch(`/api/search?q=${encodeURIComponent("naruto")}`)
   .then((r) => r.json());
 ```
 
+> **Panduan lengkap untuk frontend** (helper client, React hook, Vue composable, TypeScript types, error handling, pagination, dll.) ada di **[`frontend-guide.md`](frontend-guide.md)**.
+
 ### Konfigurasi via env vars
 
 | Var | Default | Fungsi |
@@ -356,6 +358,7 @@ otakudesu-scrape/
 ├── scrape.js          # semua scraper + CLI entrypoint
 ├── server.js          # HTTP API (Hono) — bungkus scrape.js dengan cache + rate limit
 ├── test-api.js        # smoke test untuk endpoint API
+├── frontend-guide.md  # panduan konsumsi API dari frontend
 ├── package.json
 ├── .gitignore
 ├── .env.example       # contoh konfigurasi env vars
