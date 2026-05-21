@@ -1,0 +1,17 @@
+{
+  "name": "otakudesu-scrape",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node scrape.js",
+    "start:api": "node server.js"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.0.3",
+    "cheerio": "^1.0.0",
+    "hono": "^4.12.21",
+    "lru-cache": "^11.5.0",
+    "p-limit": "^7.3.0"
+  }
+}
