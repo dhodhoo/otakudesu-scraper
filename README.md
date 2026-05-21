@@ -145,9 +145,8 @@ Per-endpoint TTL (otomatis):
 
 | Endpoint | TTL |
 |---|---|
-| `/api/home`, `/api/episode/*`, `/api/search`, `/api/ongoing` | 5–10 menit |
-| `/api/genre/*`, `/api/anime/*` | 30–60 menit |
-| `/api/complete`, `/api/schedule` | 1–6 jam |
+| `/api/home`, `/api/ongoing`, `/api/complete`, `/api/genre/*`, `/api/anime/*`, `/api/episode/*`, `/api/search` | 1 jam |
+| `/api/schedule` | 6 jam |
 | `/api/anime-list`, `/api/genres` | 24 jam |
 
 LRU cache in-memory (`lru-cache`), max 1000 entries. Hilang saat restart — kalau butuh persistent, ganti dengan Redis di `server.js`.

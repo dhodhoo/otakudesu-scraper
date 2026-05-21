@@ -45,18 +45,19 @@ const outboundLimit = pLimit(
 );
 
 // ---- Cache ----
-// Per-endpoint TTL. Halaman yang sering update TTL pendek, yang jarang panjang.
+// Per-endpoint TTL. Minimum 1 jam — Otakudesu tidak update setiap menit.
+// Endpoint yang lebih stabil (anime-list, genres) TTL lebih panjang.
 const TTL = {
-  home: 5 * 60_000,           // 5 min
-  ongoing: 10 * 60_000,       // 10 min
+  home: 60 * 60_000,          // 1 hour
+  ongoing: 60 * 60_000,       // 1 hour
   complete: 60 * 60_000,      // 1 hour
   list: 24 * 60 * 60_000,     // 1 day
   genres: 24 * 60 * 60_000,   // 1 day
-  genre: 30 * 60_000,         // 30 min
+  genre: 60 * 60_000,         // 1 hour
   schedule: 6 * 60 * 60_000,  // 6 hours
-  search: 10 * 60_000,        // 10 min
+  search: 60 * 60_000,        // 1 hour
   anime: 60 * 60_000,         // 1 hour
-  episode: 10 * 60_000,       // 10 min
+  episode: 60 * 60_000,       // 1 hour
 };
 
 const cache = new LRUCache({ max: 1000, ttl: 30 * 60_000 });
