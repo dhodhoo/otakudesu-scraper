@@ -63,7 +63,8 @@ const TTL = {
   episode: 60 * 60_000,       // 1 hour
 };
 
-const cache = new LRUCache({ max: 1000, ttl: 30 * 60_000 });
+// ttl di sini adalah default fallback — respond() selalu pass ttl eksplisit per endpoint
+const cache = new LRUCache({ max: 1000, ttl: 60 * 60_000 });
 
 async function cached(key, ttlMs, fn) {
   const hit = cache.get(key);
