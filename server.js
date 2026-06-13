@@ -279,7 +279,8 @@ app.get("/api/episode/:slug", async (c) => {
   const fullKey = `episode:${slug}:full`;
   const fullHit = cache.get(fullKey);
   if (fullHit) {
-    return c.json({ data: fullHit, cached: true });
+    c.header("X-Cache", "HIT");
+    return c.json(fullHit);
   }
 
   // 2. Jalankan priority-only resolve untuk response cepat
@@ -293,7 +294,8 @@ app.get("/api/episode/:slug", async (c) => {
     scheduleBackgroundResolve(slug, url);
   }
 
-  return c.json({ data, cached: wasCached });
+  c.header("X-Cache", wasCached ? "HIT" : "MISS");
+  return c.json(data);
 });
 
 // Resolve satu mirror on-demand (lazy) — dipanggil frontend saat user klik mirror
