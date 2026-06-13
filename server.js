@@ -7,6 +7,8 @@
 //   HTTP_PROXY       optional, http(s) proxy URL untuk outbound (mis. http://user:pass@host:port)
 //   OUTBOUND_CONCURRENCY  default 3 — max concurrent requests ke Otakudesu
 
+import crypto from "node:crypto";
+
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { serve } from "@hono/node-server";
@@ -32,7 +34,8 @@ if (process.env.HTTP_PROXY) {
   try {
     const { HttpsProxyAgent } = await import("https-proxy-agent");
     configureFetch({ proxyAgent: new HttpsProxyAgent(process.env.HTTP_PROXY) });
-    console.log("Proxy configured:", process.env.HTTP_PROXY.replace(/:[^@]+@/, ":****@"));
+    // Sembunyikan semua credentials (user:pass) dari log, bukan hanya password
+    console.log("Proxy configured:", process.env.HTTP_PROXY.replace(/\/\/[^@]+@/, "//*****@"));
   } catch {
     console.warn(
       "HTTP_PROXY set but `https-proxy-agent` not installed. Run: npm i https-proxy-agent"
@@ -71,6 +74,9 @@ async function cached(key, ttlMs, fn) {
 }
 
 // ---- Inbound rate limit (per IP, sliding window sederhana) ----
+// Catatan: state ini in-memory dan RESET saat server restart.
+// Untuk rate limit yang persistent, butuh Redis atau store eksternal.
+// Untuk production low-traffic, ini sudah cukup.
 const rateBuckets = new Map();
 const RATE_LIMIT = parseInt(process.env.RATE_LIMIT || "60", 10); // req/menit
 const RATE_WINDOW = 60_000;
@@ -117,9 +123,18 @@ app.use("*", async (c, next) => {
   );
 });
 
-const allowedOrigins = (process.env.ALLOWED_ORIGINS || "*")
+// CORS: default tolak semua cross-origin kalau ALLOWED_ORIGINS tidak diset.
+// Jangan default ke "*" — itu mengizinkan semua origin di production.
+if (!process.env.ALLOWED_ORIGINS) {
+  console.warn(
+    "WARNING: ALLOWED_ORIGINS tidak diset — semua request cross-origin akan ditolak. " +
+    "Set ALLOWED_ORIGINS=https://domain-anda.com untuk production."
+  );
+}
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
   .split(",")
-  .map((s) => s.trim());
+  .map((s) => s.trim())
+  .filter(Boolean);
 
 app.use(
   "*",
@@ -131,10 +146,16 @@ app.use(
 );
 
 app.use("/api/*", async (c, next) => {
-  // API key (optional)
+  // API key (optional) — constant-time comparison untuk cegah timing attack
   if (process.env.API_KEY) {
-    const key = c.req.header("X-API-Key");
-    if (key !== process.env.API_KEY) {
+    const key = c.req.header("X-API-Key") || "";
+    const expected = process.env.API_KEY;
+    const keyBuf = Buffer.from(key);
+    const expectedBuf = Buffer.from(expected);
+    const valid =
+      keyBuf.length === expectedBuf.length &&
+      crypto.timingSafeEqual(keyBuf, expectedBuf);
+    if (!valid) {
       return c.json({ error: "invalid or missing X-API-Key" }, 401);
     }
   }
@@ -156,8 +177,9 @@ function respond(c, key, ttlMs, fn) {
       return c.json(data);
     })
     .catch((err) => {
+      // Log detail ke server saja; jangan bocorkan internal path/struktur ke client
       console.error("scrape error:", err.message);
-      return c.json({ error: err.message }, 502);
+      return c.json({ error: "upstream service error" }, 502);
     });
 }
 
@@ -205,6 +227,10 @@ app.get("/api/genres", (c) => respond(c, "genres", TTL.genres, () => listGenres(
 
 app.get("/api/genre/:slug", (c) => {
   const slug = c.req.param("slug");
+  // Validasi slug: hanya izinkan a-z, 0-9, dan dash (cegah SSRF via :// prefix)
+  if (!/^[a-z0-9-]+$/.test(slug)) {
+    return c.json({ error: "invalid genre slug" }, 400);
+  }
   const page = parseInt(c.req.query("page") || "1", 10);
   return respond(c, `genre:${slug}:${page}`, TTL.genre, () =>
     scrapeGenre(slug, { page })
