@@ -127,7 +127,7 @@ function b64decode(s) {
   return Buffer.from(s, "base64").toString("utf-8");
 }
 
-async function getNonce(episodeUrl) {
+export async function getNonce(episodeUrl) {
   // Kembalikan nonce dari cache jika masih valid
   const cached = nonceCache.get(episodeUrl);
   if (cached && cached.expiry > Date.now()) return cached.nonce;
@@ -146,7 +146,7 @@ async function getNonce(episodeUrl) {
   return nonce;
 }
 
-async function resolveMirror({ id, i, q }, nonce, episodeUrl) {
+export async function resolveMirror({ id, i, q }, nonce, episodeUrl) {
   const body = new URLSearchParams({
     id: String(id),
     i: String(i),

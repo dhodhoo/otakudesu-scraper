@@ -26,6 +26,8 @@ import {
   search,
   scrapeAnime,
   scrapeEpisode,
+  getNonce,
+  resolveMirror,
   configureFetch,
 } from "./scrape.js";
 
@@ -261,6 +263,41 @@ app.get("/api/episode/:slug", (c) => {
   return respond(c, `episode:${slug}:${skipMirrors ? "skip" : "full"}`, TTL.episode, () =>
     scrapeEpisode(url, { skipMirrors })
   );
+});
+
+// Resolve satu mirror on-demand (lazy) — dipanggil frontend saat user klik mirror
+app.get("/api/mirror/:slug/:mirrorIndex", async (c) => {
+  const slug = c.req.param("slug");
+  const mirrorIndex = parseInt(c.req.param("mirrorIndex"), 10);
+  const cacheKey = `mirror:${slug}:${mirrorIndex}`;
+
+  // Cek cache dulu
+  const hit = cache.get(cacheKey);
+  if (hit) return c.json({ data: hit, cached: true });
+
+  const episodeUrl = `https://otakudesu.blog/episode/${slug}/`;
+  try {
+    // Fetch episode page untuk dapat token mirror
+    const episode = await scrapeEpisode(episodeUrl, { skipMirrors: true });
+    const token = episode.mirrors.find((m) => m.mirrorIndex === mirrorIndex);
+    if (!token) return c.json({ error: "mirror not found" }, 404);
+
+    const nonce = await getNonce(episodeUrl);
+    const iframeSrc = await resolveMirror(token, nonce, episodeUrl);
+
+    const result = {
+      quality: token.quality,
+      mirrorIndex: token.mirrorIndex,
+      host: token.host,
+      iframeUrl: iframeSrc,
+      directUrl: null,
+    };
+    cache.set(cacheKey, result, { ttl: TTL.episode });
+    return c.json({ data: result, cached: false });
+  } catch (err) {
+    console.error("mirror resolve error:", err.message);
+    return c.json({ error: "upstream service error" }, 502);
+  }
 });
 
 // ---- Boot ----
