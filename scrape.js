@@ -611,8 +611,15 @@ export async function search(
   return { keyword, url, count: items.length, items };
 }
 
+// Quality yang dianggap priority (HD/FHD) — resolve duluan sebelum yang lain
+const PRIORITY_QUALITY_PATTERNS = [/720/i, /1080/i, /fhd/i, /\bhd\b/i];
+
+function isPriorityQuality(q) {
+  return PRIORITY_QUALITY_PATTERNS.some((p) => p.test(q || ""));
+}
+
 export async function scrapeEpisode(episodeUrl, options = {}) {
-  const { skipMirrors = false, mirrorConcurrency = 5 } = options;
+  const { skipMirrors = false, mirrorConcurrency = 5, priorityOnly = false } = options;
 
   const html = await fetchText(episodeUrl);
   const $ = load(html);
@@ -713,36 +720,56 @@ export async function scrapeEpisode(episodeUrl, options = {}) {
   if (!skipMirrors && tokens.length) {
     const nonce = await getNonce(episodeUrl);
 
-    // Resolve semua mirror parallel
-    mirrors = await mapWithConcurrency(
-      tokens,
+    const priorityTokens = tokens.filter((t) => isPriorityQuality(t.q));
+    const restTokens = tokens.filter((t) => !isPriorityQuality(t.q));
+
+    // Resolve priority (HD/FHD) dulu — ini yang paling penting untuk default player
+    const resolvedPriority = await mapWithConcurrency(
+      priorityTokens,
       mirrorConcurrency,
       async (tok) => {
         try {
           const iframeSrc = await resolveMirror(tok, nonce, episodeUrl);
-          return {
-            quality: tok.q,
-            mirrorIndex: tok.i,
-            host: tok.host,
-            iframeUrl: iframeSrc,
-            directUrl: null,
-          };
+          return { quality: tok.q, mirrorIndex: tok.i, host: tok.host, iframeUrl: iframeSrc, directUrl: null };
         } catch (err) {
-          return {
-            quality: tok.q,
-            mirrorIndex: tok.i,
-            host: tok.host,
-            error: err.message,
-          };
+          return { quality: tok.q, mirrorIndex: tok.i, host: tok.host, error: err.message };
         }
       },
     );
+
+    if (priorityOnly) {
+      // Return priority resolved + rest unresolved (untuk background resolve)
+      const unresolvedRest = restTokens.map((tok) => ({
+        quality: tok.q,
+        mirrorIndex: tok.i,
+        host: tok.host,
+        tokenId: tok.id,
+        resolved: false,
+      }));
+      mirrors = [...resolvedPriority, ...unresolvedRest];
+    } else {
+      // Resolve semua (full mode)
+      const resolvedRest = await mapWithConcurrency(
+        restTokens,
+        mirrorConcurrency,
+        async (tok) => {
+          try {
+            const iframeSrc = await resolveMirror(tok, nonce, episodeUrl);
+            return { quality: tok.q, mirrorIndex: tok.i, host: tok.host, iframeUrl: iframeSrc, directUrl: null };
+          } catch (err) {
+            return { quality: tok.q, mirrorIndex: tok.i, host: tok.host, error: err.message };
+          }
+        },
+      );
+      mirrors = [...resolvedPriority, ...resolvedRest];
+    }
   } else if (tokens.length) {
     // skipMirrors: surface tokens without resolving
     mirrors = tokens.map((tok) => ({
       quality: tok.q,
       mirrorIndex: tok.i,
       host: tok.host,
+      tokenId: tok.id,
       resolved: false,
     }));
   }

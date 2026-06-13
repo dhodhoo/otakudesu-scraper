@@ -256,20 +256,52 @@ app.get("/api/anime/:slug", (c) => {
   return respond(c, `anime:${slug}`, TTL.anime, () => scrapeAnime(url));
 });
 
-app.get("/api/episode/:slug", (c) => {
+// Track episode yang sedang di-background-resolve
+const backgroundResolving = new Set();
+
+function scheduleBackgroundResolve(slug, url) {
+  if (backgroundResolving.has(slug)) return;
+  backgroundResolving.add(slug);
+  scrapeEpisode(url, { skipMirrors: false, priorityOnly: false })
+    .then((fullData) => {
+      cache.set(`episode:${slug}:full`, fullData, { ttl: TTL.episode });
+    })
+    .catch((err) => console.error(`bg-resolve error [${slug}]:`, err.message))
+    .finally(() => backgroundResolving.delete(slug));
+}
+
+app.get("/api/episode/:slug", async (c) => {
   const slug = c.req.param("slug");
   const skipMirrors = c.req.query("skipMirrors") === "1";
   const url = `https://otakudesu.blog/episode/${slug}/`;
-  return respond(c, `episode:${slug}:${skipMirrors ? "skip" : "full"}`, TTL.episode, () =>
-    scrapeEpisode(url, { skipMirrors })
+
+  // 1. Cek cache full (dari background resolve sebelumnya) — paling lengkap
+  const fullKey = `episode:${slug}:full`;
+  const fullHit = cache.get(fullKey);
+  if (fullHit) {
+    return c.json({ data: fullHit, cached: true });
+  }
+
+  // 2. Jalankan priority-only resolve untuk response cepat
+  const priorityKey = `episode:${slug}:${skipMirrors ? "skip" : "priority"}`;
+  const { data, cached: wasCached } = await cached(priorityKey, TTL.episode, () =>
+    scrapeEpisode(url, { skipMirrors, priorityOnly: !skipMirrors })
   );
+
+  // 3. Trigger background resolve untuk mendapat semua mirror
+  if (!skipMirrors && !wasCached) {
+    scheduleBackgroundResolve(slug, url);
+  }
+
+  return c.json({ data, cached: wasCached });
 });
 
 // Resolve satu mirror on-demand (lazy) — dipanggil frontend saat user klik mirror
 app.get("/api/mirror/:slug/:mirrorIndex", async (c) => {
   const slug = c.req.param("slug");
   const mirrorIndex = parseInt(c.req.param("mirrorIndex"), 10);
-  const cacheKey = `mirror:${slug}:${mirrorIndex}`;
+  const quality = c.req.query("q") || null; // kualitas untuk disambiguasi duplikat mirrorIndex
+  const cacheKey = `mirror:${slug}:${quality ?? ""}:${mirrorIndex}`;
 
   // Cek cache dulu
   const hit = cache.get(cacheKey);
@@ -277,13 +309,25 @@ app.get("/api/mirror/:slug/:mirrorIndex", async (c) => {
 
   const episodeUrl = `https://otakudesu.blog/episode/${slug}/`;
   try {
-    // Fetch episode page untuk dapat token mirror
+    // Fetch dengan skipMirrors:true untuk dapat semua token (termasuk tokenId)
+    // Cache ini terpisah dari episode:full cache
     const episode = await scrapeEpisode(episodeUrl, { skipMirrors: true });
-    const token = episode.mirrors.find((m) => m.mirrorIndex === mirrorIndex);
+    // Cari token berdasarkan mirrorIndex + quality (untuk disambiguasi jika ada duplikat mirrorIndex)
+    const token = episode.mirrors.find((m) =>
+      m.mirrorIndex === mirrorIndex && (quality === null || m.quality === quality)
+    );
     if (!token) return c.json({ error: "mirror not found" }, 404);
 
+    // Kalau sudah resolved (dari cache episode), langsung kembalikan
+    if (token.iframeUrl) {
+      return c.json({ data: { quality: token.quality, mirrorIndex: token.mirrorIndex, host: token.host, iframeUrl: token.iframeUrl, directUrl: null }, cached: true });
+    }
+
+    // Perlu resolve: ambil nonce lalu resolve mirror menggunakan tokenId
     const nonce = await getNonce(episodeUrl);
-    const iframeSrc = await resolveMirror(token, nonce, episodeUrl);
+    // tokenId adalah id asli dari data-content Otakudesu
+    const mirrorToken = { id: token.tokenId, i: token.mirrorIndex, q: token.quality };
+    const iframeSrc = await resolveMirror(mirrorToken, nonce, episodeUrl);
 
     const result = {
       quality: token.quality,
