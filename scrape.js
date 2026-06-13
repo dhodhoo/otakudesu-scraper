@@ -21,6 +21,11 @@ const NONCE_ACTION = "aa1208d27f29ca340c92c66d1926f13f";
 const MIRROR_ACTION = "2a3505c93b0035d3f455df82bf976b84";
 const AJAX_URL = "https://otakudesu.blog/wp-admin/admin-ajax.php";
 
+// Cache nonce per episode URL — nonce Otakudesu berlaku beberapa menit
+// sehingga request berulang ke episode yang sama tidak perlu fetch ulang
+const nonceCache = new Map(); // episodeUrl -> { nonce, expiry }
+const NONCE_TTL = 5 * 60 * 1000; // 5 menit
+
 const DEFAULT_BROWSER_HEADERS = {
   "User-Agent": UA,
   Accept:
@@ -123,6 +128,10 @@ function b64decode(s) {
 }
 
 async function getNonce(episodeUrl) {
+  // Kembalikan nonce dari cache jika masih valid
+  const cached = nonceCache.get(episodeUrl);
+  if (cached && cached.expiry > Date.now()) return cached.nonce;
+
   const body = new URLSearchParams({ action: NONCE_ACTION });
   const json = await fetchJSON(AJAX_URL, {
     method: "POST",
@@ -132,7 +141,9 @@ async function getNonce(episodeUrl) {
     },
     body,
   });
-  return json.data;
+  const nonce = json.data;
+  nonceCache.set(episodeUrl, { nonce, expiry: Date.now() + NONCE_TTL });
+  return nonce;
 }
 
 async function resolveMirror({ id, i, q }, nonce, episodeUrl) {
@@ -707,15 +718,14 @@ export async function scrapeEpisode(episodeUrl, options = {}) {
       async (tok) => {
         try {
           const iframeSrc = await resolveMirror(tok, nonce, episodeUrl);
-          const directSrc = iframeSrc
-            ? await extractDirectVideo(iframeSrc, episodeUrl)
-            : null;
+          // extractDirectVideo dihapus: fetch embed page sangat lambat (200s+)
+          // dan hasilnya jarang dipakai (frontend pakai iframeUrl langsung)
           return {
             quality: tok.q,
             mirrorIndex: tok.i,
             host: tok.host,
             iframeUrl: iframeSrc,
-            directUrl: directSrc,
+            directUrl: null,
           };
         } catch (err) {
           return {
