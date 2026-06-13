@@ -713,41 +713,32 @@ export async function scrapeEpisode(episodeUrl, options = {}) {
   if (!skipMirrors && tokens.length) {
     const nonce = await getNonce(episodeUrl);
 
-    // Strategi: resolve HANYA mirror pertama (index 0) di server untuk kecepatan.
-    // Mirror lainnya dikembalikan sebagai unresolved token — frontend bisa
-    // request /api/episode/:slug?skipMirrors=0 lagi atau resolve on-demand.
-    const firstToken = tokens[0];
-    let firstMirror;
-    try {
-      const iframeSrc = await resolveMirror(firstToken, nonce, episodeUrl);
-      firstMirror = {
-        quality: firstToken.q,
-        mirrorIndex: firstToken.i,
-        host: firstToken.host,
-        iframeUrl: iframeSrc,
-        directUrl: null,
-      };
-    } catch (err) {
-      firstMirror = {
-        quality: firstToken.q,
-        mirrorIndex: firstToken.i,
-        host: firstToken.host,
-        error: err.message,
-      };
-    }
-
-    // Sisanya dikembalikan sebagai unresolved
-    const restMirrors = tokens.slice(1).map((tok) => ({
-      quality: tok.q,
-      mirrorIndex: tok.i,
-      host: tok.host,
-      resolved: false,
-    }));
-
-    mirrors = [firstMirror, ...restMirrors];
+    // Resolve semua mirror parallel
+    mirrors = await mapWithConcurrency(
+      tokens,
+      mirrorConcurrency,
+      async (tok) => {
+        try {
+          const iframeSrc = await resolveMirror(tok, nonce, episodeUrl);
+          return {
+            quality: tok.q,
+            mirrorIndex: tok.i,
+            host: tok.host,
+            iframeUrl: iframeSrc,
+            directUrl: null,
+          };
+        } catch (err) {
+          return {
+            quality: tok.q,
+            mirrorIndex: tok.i,
+            host: tok.host,
+            error: err.message,
+          };
+        }
+      },
+    );
   } else if (tokens.length) {
-    // skipMirrors: surface tokens without resolving so the caller can still see
-    // what mirrors exist and resolve them later.
+    // skipMirrors: surface tokens without resolving
     mirrors = tokens.map((tok) => ({
       quality: tok.q,
       mirrorIndex: tok.i,
