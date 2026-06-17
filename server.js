@@ -8,6 +8,15 @@
 //   OUTBOUND_CONCURRENCY  default 3 — max concurrent requests ke Otakudesu
 
 import crypto from "node:crypto";
+import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
+// Load .env dari direktori yang sama dengan server.js
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const { config } = await import("dotenv");
+config({ path: join(__dirname, ".env") });
 
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -22,6 +31,7 @@ import {
   scrapeAnimeList,
   listGenres,
   scrapeGenre,
+  scrapeAlphabet,
   scrapeSchedule,
   search,
   scrapeAnime,
@@ -57,6 +67,7 @@ const TTL = {
   ongoing: 60 * 60_000,       // 1 hour
   complete: 60 * 60_000,      // 1 hour
   list: 24 * 60 * 60_000,     // 1 day
+  alphabet: 24 * 60 * 60_000,  // 1 day
   genres: 24 * 60 * 60_000,   // 1 day
   genre: 60 * 60_000,         // 1 hour
   schedule: 6 * 60 * 60_000,  // 6 hours
@@ -195,6 +206,7 @@ app.get("/", (c) =>
       "GET /api/ongoing?page=1",
       "GET /api/complete?page=1",
       "GET /api/anime-list",
+      "GET /api/alphabet/:letter?page=1",
       "GET /api/genres",
       "GET /api/genre/:slug?page=1",
       "GET /api/schedule",
@@ -225,6 +237,17 @@ app.get("/api/complete", (c) => {
 app.get("/api/anime-list", (c) =>
   respond(c, "list", TTL.list, () => scrapeAnimeList())
 );
+
+app.get("/api/alphabet/:letter", (c) => {
+  const letter = c.req.param("letter");
+  if (!/^[a-z0-9]$/i.test(letter)) {
+    return c.json({ error: "invalid letter" }, 400);
+  }
+  const page = parseInt(c.req.query("page") || "1", 10);
+  return respond(c, `alphabet:${letter.toLowerCase()}:${page}`, TTL.alphabet, () =>
+    scrapeAlphabet(letter, { page })
+  );
+});
 
 app.get("/api/genres", (c) => respond(c, "genres", TTL.genres, () => listGenres()));
 

@@ -535,6 +535,59 @@ export async function scrapeGenre(slugOrUrl, { page = 1 } = {}) {
   return { url, slug, count: items.length, items, pagination };
 }
 
+let _animeListCache = null
+let _animeListCacheTime = 0
+const ANIME_LIST_CACHE_TTL = 60 * 60 * 1000
+
+async function getCachedAnimeList() {
+  if (_animeListCache && Date.now() - _animeListCacheTime < ANIME_LIST_CACHE_TTL) {
+    return _animeListCache
+  }
+  _animeListCache = await scrapeAnimeList()
+  _animeListCacheTime = Date.now()
+  return _animeListCache
+}
+
+export async function scrapeAlphabet(letter, { page = 1 } = {}) {
+  const fullList = await getCachedAnimeList()
+  const group = fullList.groups.find(
+    g => g.letter?.toLowerCase() === letter.toLowerCase()
+  )
+  if (!group) return { letter: letter.toLowerCase(), items: [], pagination: null }
+
+  const pageSize = 20
+  const total = group.anime.length
+  const start = (page - 1) * pageSize
+  const pageItems = group.anime.slice(start, start + pageSize)
+
+  const items = await mapWithConcurrency(pageItems, 5, async (anime) => {
+    try {
+      const detail = await scrapeAnime(anime.url)
+      return {
+        title: anime.title,
+        slug: anime.slug,
+        image: detail.image,
+        totalEpisodes: detail.episodeCount || detail.info?.totalEpisode || null,
+        genres: detail.info?.genres || [],
+      }
+    } catch {
+      return { title: anime.title, slug: anime.slug, image: null }
+    }
+  })
+
+  return {
+    letter: letter.toLowerCase(),
+    items,
+    pagination: {
+      currentPage: page,
+      totalPages: Math.ceil(total / pageSize),
+      totalItems: total,
+      nextUrl: start + pageSize < total
+        ? `/api/alphabet/${letter.toLowerCase()}?page=${page + 1}` : null,
+    }
+  }
+}
+
 export async function scrapeSchedule(
   scheduleUrl = "https://otakudesu.blog/jadwal-rilis/",
 ) {
@@ -571,7 +624,8 @@ export async function search(
   if (!keyword || !keyword.trim()) {
     return { keyword, count: 0, items: [] };
   }
-  const url = `${baseUrl.replace(/\/$/, "")}/?s=${encodeURIComponent(keyword.trim())}`;
+  // Use post_type=anime to get anime-only results with cover images
+  const url = `${baseUrl.replace(/\/$/, "")}/?s=${encodeURIComponent(keyword.trim())}&post_type=anime`;
   const html = await fetchText(url);
   const $ = load(html);
 
@@ -582,19 +636,32 @@ export async function search(
       const linkUrl = $a.attr("href") || null;
       const isEpisode = linkUrl && linkUrl.includes("/episode/");
       const isAnime = linkUrl && linkUrl.includes("/anime/");
-      const sets = $li
-        .find(".set")
-        .map((_, s) => $(s).text().trim())
-        .get()
-        .filter(Boolean);
+
+      // Cover image — prefer src, fallback to data-src (lazy load)
+      const $img = $li.find("img").first();
+      const image = $img.attr("src") || $img.attr("data-src") || null;
+
+      // Parse .set divs — genres come as <a> links, others as plain text
       const setMap = {};
-      for (const s of sets) {
-        const m = s.match(/^([^:]+):\s*(.*)$/);
-        if (m) setMap[m[1].trim().toLowerCase()] = m[2].trim();
-      }
+      $li.find(".set").each((_, s) => {
+        const $s = $(s);
+        const raw = $s.text().trim();
+        const m = raw.match(/^([^:]+):\s*(.*)$/);
+        if (!m) return;
+        const key = m[1].trim().toLowerCase();
+        if (key === "genres") {
+          // Collect genre names from anchor tags for clean comma-separated string
+          const genreList = $s.find("a").map((_, a) => $(a).text().trim()).get().filter(Boolean);
+          setMap.genres = genreList.join(", ") || m[2].trim() || null;
+        } else {
+          setMap[key] = m[2].trim() || null;
+        }
+      });
+
       return {
         title: $a.text().trim(),
         url: linkUrl,
+        image,
         kind: isEpisode ? "episode" : isAnime ? "anime" : "other",
         slug: isEpisode
           ? slugFromEpisodeUrl(linkUrl)

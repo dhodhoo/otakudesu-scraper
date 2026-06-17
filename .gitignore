@@ -27,3 +27,6 @@ out.json
 # samples/
 apikey.txt
 .api_key.txt
+.vps.txt
+
+.claude
